@@ -135,25 +135,9 @@
   button.action { background: linear-gradient(45deg, #00c6ff, #0072ff); color: #fff; }
   button.delete { background: #ff4b4b; color: #fff; }
   button.cancel { background: #555; color: #fff; }
-
-  /* Message */
-  #message {
-    position: fixed;
-    bottom: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #00c6ff;
-    color: #000;
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    display: none;
-    z-index: 300;
-    font-weight: bold;
-  }
 </style>
 </head>
 <body>
-<div id="message"></div>
 <!-- Bulk Import/Export Modal -->
 <div class="modal" id="bulkModal">
   <div class="modalContent">
@@ -232,42 +216,16 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
 <script>
-function showMessage(msg){
-  const el=document.getElementById("message");
-  el.textContent=msg;
-  el.style.display="block";
-  setTimeout(()=>{el.style.display="none";},1000);
-}
-
-// Add openModal and closeModal to resolve ReferenceError
-function openModal(modalId){
-  const modal = document.getElementById(modalId);
-  if(modal){
-    modal.classList.add('active');
-    const mainContent = document.getElementById('mainContent');
-    if(mainContent) mainContent.classList.add('blurred');
-  }
-}
-
-function closeModal(modalId){
-  const modal = document.getElementById(modalId);
-  if(modal){
-    modal.classList.remove('active');
-    const mainContent = document.getElementById('mainContent');
-    if(mainContent) mainContent.classList.remove('blurred');
-  }
-}
-
 let dreams = JSON.parse(localStorage.getItem("dreams")) || [];
-let deleteIndex = null; 
-let editIndex = null;   
+let deleteIndex = null; // index in original `dreams` array
+let editIndex = null;   // index in original `dreams` array
 document.getElementById("exportAllBtn").onclick = async () => {
   try {
     const dataStr = JSON.stringify(dreams);
     await navigator.clipboard.writeText(dataStr);
-    showMessage("All dreams copied to clipboard!");
+    alert("All dreams copied to clipboard!");
   } catch(err) {
-    showMessage("Failed to copy dreams: " + err);
+    alert("Failed to copy dreams: " + err);
   }
 };
 document.getElementById("importAllBtn").onclick = () => {
@@ -279,9 +237,9 @@ document.getElementById("importAllBtn").onclick = () => {
     localStorage.setItem("dreams", JSON.stringify(dreams));
     renderDreams();
     closeModal("bulkModal");
-    showMessage("Dreams imported successfully!");
+    alert("Dreams imported successfully!");
   } catch(err) {
-    showMessage("Failed to import dreams: " + err);
+    alert("Failed to import dreams: " + err);
   }
 };
 
@@ -306,10 +264,174 @@ bulkBtn.style.cursor = "pointer";
 bulkBtn.onclick = () => openModal("bulkModal");
 document.body.appendChild(bulkBtn);
 
-// (rest of JS unchanged except replacing alert() with showMessage())
+
+// Helpers
+const mainContent = document.getElementById("mainContent");
+const openModal = id => {
+  document.getElementById(id).classList.add("active");
+  mainContent.classList.add("blurred");
+};
+const closeModal = id => {
+  document.getElementById(id).classList.remove("active");
+  mainContent.classList.remove("blurred");
+  if(id === "dreamModal") resetDreamForm();
+};
+function resetDreamForm(){
+  document.getElementById("dreamName").value = "";
+  document.getElementById("dreamText").value = "";
+  document.getElementById("dreamTags").value = "";
+  editIndex = null;
+  document.getElementById("modalTitle").textContent = "Add Dream";
+}
+
+// Save Dream (preserve date on edit)
+function saveDream(){
+  const name = document.getElementById("dreamName").value.trim();
+  const text = document.getElementById("dreamText").value.trim();
+  const tagsRaw = document.getElementById("dreamTags").value.trim();
+  if(!name || !text) return alert("Name and dream text required!");
+  const nowFormatted = new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+  const tagsArr = tagsRaw ? tagsRaw.split(",").map(t=>t.trim()).filter(Boolean) : [];
+
+  if(editIndex !== null && Number.isInteger(editIndex) && editIndex >= 0 && editIndex < dreams.length){
+    // Preserve existing date if present
+    const existingDate = dreams[editIndex]?.date || nowFormatted;
+    const dreamData = { name, text, tags: tagsArr, date: existingDate };
+    dreams[editIndex] = dreamData;
+  } else {
+    const dreamData = { name, text, tags: tagsArr, date: nowFormatted };
+    dreams.unshift(dreamData);
+  }
+
+  localStorage.setItem("dreams",JSON.stringify(dreams));
+  closeModal("dreamModal");
+  renderDreams();
+}
+
+// Render (defensive with tags type) with sorting and correct index mapping
+function renderDreams(){
+  const entriesDiv=document.getElementById("entries");
+  entriesDiv.innerHTML="";
+  const search=(document.getElementById("searchInput").value||"").toLowerCase();
+  const tagFilter=document.getElementById("tagFilter").value;
+  const sortBy = document.getElementById("sortSelect").value || "newest";
+  const allTags=new Set();
+
+  // collect tags from all dreams (so filter select shows full set)
+  for(let i=0;i<dreams.length;i++){
+    const d = dreams[i];
+    const tagsArray = Array.isArray(d.tags) ? d.tags : (d.tags ? String(d.tags).split(",").map(t=>t.trim()).filter(Boolean) : []);
+    tagsArray.forEach(t=>allTags.add(t));
+  }
+
+  // Build filtered list with reference to original index
+  const filteredWithIndex = [];
+  for(let i=0;i<dreams.length;i++){
+    const d = dreams[i];
+    const tagsArray = Array.isArray(d.tags) ? d.tags : (d.tags ? String(d.tags).split(",").map(t=>t.trim()).filter(Boolean) : []);
+    const textParts = [d.name||"", d.text||"", d.date||""].map(s=>String(s).toLowerCase());
+    if(search && !textParts.some(s=>s.includes(search))) continue;
+    if(tagFilter && !tagsArray.includes(tagFilter)) continue;
+    filteredWithIndex.push({ d, origIndex: i });
+  }
+
+  // Sort filtered list (compare using d properties)
+  filteredWithIndex.sort((a,b)=>{
+    const da = new Date(a.d.date);
+    const db = new Date(b.d.date);
+    switch(sortBy){
+      case "newest":
+        if(!isNaN(db) && !isNaN(da)) return db - da;
+        if(!isNaN(db)) return 1;
+        if(!isNaN(da)) return -1;
+        return 0;
+      case "oldest":
+        if(!isNaN(da) && !isNaN(db)) return da - db;
+        if(!isNaN(da)) return -1;
+        if(!isNaN(db)) return 1;
+        return 0;
+      case "longest":
+        return (b.d.text?.length||0) - (a.d.text?.length||0);
+      case "shortest":
+        return (a.d.text?.length||0) - (b.d.text?.length||0);
+      default:
+        return 0;
+    }
+  });
+
+  // Render cards using original indices for delete/edit actions
+  filteredWithIndex.forEach(item=>{
+    const d = item.d;
+    const origIndex = item.origIndex;
+    const tagsArray = Array.isArray(d.tags) ? d.tags : (d.tags ? String(d.tags).split(",").map(t=>t.trim()).filter(Boolean) : []);
+    const card=document.createElement("div");
+    card.className="card";
+    card.innerHTML=`
+      <h3>${d.date||""} — ${d.name||"Untitled Dream"}</h3>
+      <div class="tags">${tagsArray.map(t=>`<span class="tag">${t}</span>`).join("")}</div>
+      <div class="details" style="display:none;">
+        <p>${(d.text||"").replace(/\n/g,"<br>")}</p>
+        <button class="action edit">Edit</button>
+        <button class="delete">Delete</button>
+      </div>`;
+    card.onclick=e=>{
+      const details=card.querySelector(".details");
+      if(e.target.classList.contains("delete")){
+        e.stopPropagation();
+        // use the original index in the main dreams array
+        deleteIndex = origIndex;
+        openModal("deleteModal");
+      } else if(e.target.classList.contains("edit")){
+        e.stopPropagation();
+        // set editIndex to original array index so saveDream updates correct item
+        editIndex = origIndex;
+        document.getElementById("dreamName").value=d.name||"";
+        document.getElementById("dreamText").value=d.text||"";
+        document.getElementById("dreamTags").value=tagsArray.join(", ");
+        document.getElementById("modalTitle").textContent="Edit Dream";
+        openModal("dreamModal");
+      } else { details.style.display=details.style.display==="block"?"none":"block"; }
+    };
+    entriesDiv.appendChild(card);
+  });
+
+  const tagSelect=document.getElementById("tagFilter");
+  tagSelect.innerHTML='<option value="">Filter by tag</option>';
+  Array.from(allTags).sort().forEach(t=>{
+    const opt=document.createElement("option"); opt.value=t; opt.textContent=t; tagSelect.appendChild(opt);
+  });
+}
 
 /* ---------- Robust CSV Parser ---------- */
-function parseCSV(text) { /* unchanged */ }
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let i = 0;
+  let inQuotes = false;
+
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+  while (i < text.length) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (i + 1 < text.length && text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += char; i++; continue;
+    } else {
+      if (char === '"') { inQuotes = true; i++; continue; }
+      if (char === ',') { row.push(field); field = ""; i++; continue; }
+      if (char === '\r') { row.push(field); field = ""; rows.push(row); row = []; i++; if(i<text.length && text[i]==='\n') i++; continue; }
+      if (char === '\n') { row.push(field); field = ""; rows.push(row); row = []; i++; continue; }
+      field += char; i++;
+    }
+  }
+  row.push(field);
+  rows.push(row);
+  return rows.filter(r => r.some(c => String(c).trim() !== ""));
+}
 
 /* ---------- Auto-detect Import ---------- */
 document.getElementById("importFile").addEventListener("change", function(e){
@@ -317,10 +439,11 @@ document.getElementById("importFile").addEventListener("change", function(e){
   if(!file) return;
 
   if(file.name.toLowerCase().endsWith(".csv")){
+    // Oniri CSV import
     const reader = new FileReader();
     reader.onload = function(ev){
       const rows = parseCSV(String(ev.target.result || ""));
-      if (!rows.length) { showMessage("CSV appears empty."); return; }
+      if (!rows.length) { alert("CSV appears empty."); return; }
       const normalize = s => String(s || "").replace(/^\uFEFF/,"").trim().toLowerCase();
       const header = rows[0].map(h => normalize(h));
       const idx = {
@@ -329,46 +452,222 @@ document.getElementById("importFile").addEventListener("change", function(e){
         story: header.indexOf("story") >= 0 ? header.indexOf("story") : header.indexOf("dream"),
         control: header.indexOf("can control")
       };
-      if (idx.date === -1 || idx.title === -1 || idx.story === -1) { showMessage("CSV missing required columns."); return; }
-      for (let r = 1; r < rows.length; r++) { /* unchanged body */ }
+      if (idx.date === -1 || idx.title === -1 || idx.story === -1) { alert("CSV is missing required columns: Date, Title, Story."); return; }
+      for (let r = 1; r < rows.length; r++) {
+        const cols = rows[r];
+        const rawDate = cols[idx.date] ?? "";
+        const rawTitle = cols[idx.title] ?? "";
+        const rawStory = cols[idx.story] ?? "";
+        const rawControl = idx.control !== -1 ? (cols[idx.control] ?? "") : "";
+        let dateStr;
+        const candidate = new Date(rawDate);
+        if (!isNaN(candidate)) { dateStr = candidate.toLocaleDateString("en-US", { year:"numeric", month:"long", day:"numeric" }); }
+        else { dateStr = String(rawDate).trim(); }
+        const name = String(rawTitle || "").trim() || "Untitled Dream";
+        const text = String(rawStory || "");
+        const tags = [];
+        if (String(rawControl).trim().toLowerCase() === "yes") tags.push("lucid");
+        const dreamData = { name, text, tags, date: dateStr };
+        dreams.unshift(dreamData);
+      }
       localStorage.setItem("dreams", JSON.stringify(dreams));
       renderDreams();
-      showMessage("Oniri CSV dreams imported!");
+      alert("Oniri CSV dreams imported successfully!");
     };
     reader.readAsText(file);
   } else if(file.name.toLowerCase().endsWith(".zip")){
+    // Apple Journal ZIP import
     const reader = new FileReader();
     reader.onload = async function(ev){
       try {
-        // unchanged zip logic
+        const zip = await JSZip.loadAsync(ev.target.result);
+        const files = Object.keys(zip.files);
+        let imported = 0;
+
+        const getString = async (zf) => {
+          const ab = await zf.async("arraybuffer");
+          const u8 = new Uint8Array(ab);
+          if (u8[0] === 0xFF && u8[1] === 0xFE) return new TextDecoder("utf-16le").decode(u8);
+          if (u8[0] === 0xFE && u8[1] === 0xFF) return new TextDecoder("utf-16be").decode(u8);
+          return new TextDecoder("utf-8").decode(u8);
+        };
+
+        const formatDateSmart = (s) => {
+          if (!s) return "";
+          const d1 = new Date(s);
+          if (!isNaN(d1)) return d1.toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+          const m = String(s).match(/(\d{4})[-\/\.](\d{1,2})[-\/\.](\d{1,2})/);
+          if (m) { const d2 = new Date(+m[1], +m[2]-1, +m[3]); if (!isNaN(d2)) return d2.toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}
+          const m2 = String(s).match(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),\s*(\d{4})/i);
+          if (m2) { const d3 = new Date(`${m2[1]} ${m2[2]}, ${m2[3]}`); if (!isNaN(d3)) return d3.toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});}
+          return "";
+        };
+        const deriveDateFromString = (s) => formatDateSmart(s || "");
+
+        // 1) Try manifest
+        const manifestName = files.find(n => /export\.json|manifest\.json|journalexport\.json/i.test(n));
+        if (manifestName) {
+          try {
+            const manifestText = await getString(zip.files[manifestName]);
+            const manifest = JSON.parse(manifestText);
+            const items = Array.isArray(manifest?.entries) ? manifest.entries
+                        : Array.isArray(manifest?.items) ? manifest.items
+                        : Array.isArray(manifest) ? manifest
+                        : [];
+            for (const it of items) {
+              const dateRaw = it.created || it.creationDate || it.date || it.createdAt || "";
+              const titleRaw = (it.title || "").trim();
+              let text = (it.text || it.content || "").trim();
+
+              if (!text) {
+                const path = it.path || it.filePath || it.relativePath || it.entryPath;
+                if (path && zip.files[path]) text = (await getString(zip.files[path])).trim();
+              }
+              if (!text) continue;
+
+              const dateStr = formatDateSmart(dateRaw) || deriveDateFromString(titleRaw) || "";
+              const name = titleRaw || text.split(/\n/).find(Boolean)?.slice(0,80) || "Untitled Dream";
+              dreams.unshift({ name, text, tags: [], date: dateStr || "" });
+              imported++;
+            }
+          } catch (e) { console.warn("Manifest present but could not be parsed:", e); }
+        }
+
+        // Fallback: scan Entries/* for html/md/txt, ignore metadata files
+        if (imported === 0) {
+          const entryFiles = files
+            .filter(f => /(^|\/)entries\//i.test(f) && /\.(html?|md|markdown|txt)$/i.test(f))
+            .filter(f => !f.split("/").pop().startsWith("._")); // ignore metadata
+
+          for (const f of entryFiles) {
+            const content = await getString(zip.files[f]);
+            let title = "";
+            let dateStr = "";
+            let bodyText = "";
+
+            if (/\.(html?)$/i.test(f)) {
+              const doc = new DOMParser().parseFromString(content, "text/html");
+              const timeEl = doc.querySelector("time, header time");
+              const h1 = doc.querySelector("h1");
+              const h2 = doc.querySelector("h2");
+              dateStr = formatDateSmart(timeEl?.getAttribute("datetime") || timeEl?.textContent || "");
+              title = (h1?.textContent || h2?.textContent || "").trim();
+              bodyText = (doc.body?.innerText || "").replace(/\r\n?/g, "\n").trim();
+            } else {
+              const lines = content.split(/\r?\n/);
+              const nonEmpty = lines.map(s=>s.trimEnd()).filter(Boolean);
+              title = nonEmpty[0] && /^#\s+/.test(nonEmpty[0]) ? nonEmpty[0].replace(/^#\s+/, "") : (nonEmpty[0]||"");
+              dateStr = formatDateSmart(nonEmpty[1]) || deriveDateFromString(f);
+              bodyText = lines.join("\n").trim();
+            }
+
+            const fileBase = f.split("/").pop().replace(/^\._/, "").replace(/\.[^.]+$/, "");
+            const cleanedTitle = title || fileBase.replace(/^\d{4}-\d{2}-\d{2}_?/, "").replace(/_/g," ").trim() || "Untitled Dream";
+            if (!dateStr) dateStr = deriveDateFromString(fileBase) || "";
+
+            dreams.unshift({
+              name: cleanedTitle,
+              text: bodyText,
+              tags: [],
+              date: dateStr
+            });
+            imported++;
+          }
+        }
+
+        if (imported === 0) throw new Error("No recognizable entries found in ZIP.");
         localStorage.setItem("dreams", JSON.stringify(dreams));
         renderDreams();
-        showMessage(`Apple Journal: imported ${imported} entries.`);
+        alert(`Apple Journal: imported ${imported} entries.`);
       } catch (err) {
         console.error(err);
-        showMessage("Failed to import Apple Journal ZIP.");
+        alert("Failed to import Apple Journal ZIP. Open the console for details.");
       }
     };
     reader.readAsArrayBuffer(file);
   } else {
-    showMessage("Unsupported file type.");
+    alert("Unsupported file type. Please select a .csv or .zip file.");
   }
 });
 
 /* ---------- Export ---------- */
 document.getElementById("exportBtn").addEventListener("click",function(){
-  // unchanged CSV export
-  showMessage("Dreams exported as CSV!");
+  let csv="Date,Name,Text,Tags\n";
+  dreams.forEach(d=>{
+    const name = (d.name ?? "").replace(/"/g,'""');
+    const text = (d.text ?? "").replace(/"/g,'""');
+    const tags = (Array.isArray(d.tags)? d.tags.join(";") : String(d.tags||"")).replace(/"/g,'""');
+    const date = (d.date ?? "").replace(/"/g,'""');
+    csv+=`"${date}","${name}","${text}","${tags}"\n`;
+  });
+  const blob=new Blob([csv],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="dreams_export.csv";
+  a.click();
+  URL.revokeObjectURL(url);
 });
 
+/* ---------- Events ---------- */
+document.getElementById("addBtn").onclick=()=>openModal("dreamModal");
+document.getElementById("saveDreamBtn").onclick=saveDream;
+document.getElementById("cancelDreamBtn").onclick=()=>closeModal("dreamModal");
+document.getElementById("confirmDeleteBtn").onclick=()=>{ 
+  if(deleteIndex!==null && Number.isInteger(deleteIndex) && deleteIndex >= 0 && deleteIndex < dreams.length){ 
+    dreams.splice(deleteIndex,1); 
+    localStorage.setItem("dreams",JSON.stringify(dreams)); 
+    deleteIndex=null; 
+    renderDreams(); 
+  } 
+  closeModal("deleteModal"); 
+};
+document.getElementById("cancelDeleteBtn").onclick=()=>closeModal("deleteModal");
+document.getElementById("searchInput").oninput=renderDreams;
+document.getElementById("tagFilter").onchange=renderDreams;
+document.getElementById("sortSelect").onchange=renderDreams;
+
 /* ---------- Settings ---------- */
-document.getElementById("removeDuplicatesBtn").onclick = () => {
-  if(!confirm("Remove duplicate dreams that share the same date? This will keep only the first occurrence for each date.")) return;
-  // unchanged dedupe logic
-  showMessage("Duplicates removed (by date).");
+document.getElementById("settingsBtn").onclick=()=>openModal("settingsModal");
+document.getElementById("cancelSettingsBtn").onclick=()=>closeModal("settingsModal");
+document.getElementById("deleteAllBtn").onclick=()=>{ 
+  if(confirm("Delete ALL dreams? This cannot be undone.")){ 
+    dreams=[]; 
+    localStorage.setItem("dreams",JSON.stringify(dreams)); 
+    renderDreams(); 
+    closeModal("settingsModal"); 
+  } 
 };
 
-/* rest of JS unchanged */
+// Remove duplicates (keep first occurrence for each date)
+document.getElementById("removeDuplicatesBtn").onclick = () => {
+  if(!confirm("Remove duplicate dreams that share the same date? This will keep only the first occurrence for each date.")) return;
+  const seen = new Set();
+  const newDreams = [];
+  for (let i = 0; i < dreams.length; i++) {
+    const d = dreams[i];
+    if (!d.date) {
+      // keep dreams without a date
+      newDreams.push(d);
+    } else {
+      if (!seen.has(d.date)) {
+        seen.add(d.date);
+        newDreams.push(d);
+      } // else skip duplicate
+    }
+  }
+  dreams = newDreams;
+  localStorage.setItem("dreams", JSON.stringify(dreams));
+  renderDreams();
+  alert("Duplicates removed (by date).");
+};
+
+/* ---------- Import/Export ---------- */
+document.getElementById("importExportBtn").onclick=()=>openModal("importExportModal");
+document.getElementById("cancelImportExportBtn").onclick=()=>closeModal("importExportModal");
+
+/* ---------- Initial render ---------- */
+renderDreams();
 </script>
 </body>
 </html>
