@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dream Journal</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; background: #f9f9f9; }
+    h1 { text-align: center; }
+    .card { background: white; padding: 15px; margin: 10px 0; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    input, textarea { width: 100%; padding: 8px; margin: 5px 0; border-radius: 6px; border: 1px solid #ccc; }
+    button { padding: 10px; margin: 5px; border: none; border-radius: 6px; background: #007aff; color: white; font-weight: bold; cursor: pointer; }
+    button:hover { background: #005bbb; }
+    .dream { padding: 10px; border-bottom: 1px solid #ddd; }
+    .tags { font-size: 0.9em; color: #555; }
+    .actions { margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+  <h1>🌙 Dream Journal</h1>
+
+  <div class="card">
+    <h3>Add a Dream</h3>
+    <input id="title" placeholder="Dream Title">
+    <textarea id="content" rows="4" placeholder="Describe your dream..."></textarea>
+    <input id="tags" placeholder="Tags (comma separated)">
+    <button onclick="addDream()">Save Dream</button>
+  </div>
+
+  <div class="card">
+    <h3>Search</h3>
+    <input id="search" placeholder="Search dreams..." oninput="renderDreams()">
+  </div>
+
+  <div class="card">
+    <h3>Dreams</h3>
+    <div id="dreamList"></div>
+  </div>
+
+  <div class="card">
+    <h3>Backup</h3>
+    <button onclick="exportDreams()">Export Dreams</button>
+    <input type="file" id="importFile" accept=".json" onchange="importDreams(event)">
+  </div>
+
+  <script>
+    let dreams = JSON.parse(localStorage.getItem('dreams') || '[]');
+
+    function saveDreams() {
+      localStorage.setItem('dreams', JSON.stringify(dreams));
+      renderDreams();
+    }
+
+    function addDream() {
+      const title = document.getElementById('title').value.trim();
+      const content = document.getElementById('content').value.trim();
+      const tags = document.getElementById('tags').value.split(',').map(t => t.trim()).filter(t => t);
+      if (!content) return alert("Please write your dream!");
+
+      dreams.unshift({
+        title: title || "Untitled Dream",
+        content,
+        tags,
+        date: new Date().toLocaleString()
+      });
+
+      document.getElementById('title').value = '';
+      document.getElementById('content').value = '';
+      document.getElementById('tags').value = '';
+      saveDreams();
+    }
+
+    function deleteDream(i) {
+      if (confirm("Delete this dream?")) {
+        dreams.splice(i, 1);
+        saveDreams();
+      }
+    }
+
+    function renderDreams() {
+      const search = document.getElementById('search').value.toLowerCase();
+      const list = document.getElementById('dreamList');
+      list.innerHTML = '';
+
+      dreams
+        .filter(d => d.title.toLowerCase().includes(search) || 
+                     d.content.toLowerCase().includes(search) ||
+                     d.tags.join(',').toLowerCase().includes(search))
+        .forEach((d, i) => {
+          const div = document.createElement('div');
+          div.className = 'dream';
+          div.innerHTML = `
+            <strong>${d.title}</strong> <small>(${d.date})</small><br>
+            <div>${d.content}</div>
+            <div class="tags">#${d.tags.join(' #')}</div>
+            <div class="actions">
+              <button onclick="deleteDream(${i})">Delete</button>
+            </div>
+          `;
+          list.appendChild(div);
+        });
+    }
+
+    function exportDreams() {
+      const blob = new Blob([JSON.stringify(dreams, null, 2)], {type: 'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = "dreams.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function importDreams(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (Array.isArray(data)) {
+            dreams = data;
+            saveDreams();
+          } else {
+            alert("Invalid file format");
+          }
+        } catch (err) {
+          alert("Error reading file");
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    renderDreams();
+  </script>
+</body>
+</html>
